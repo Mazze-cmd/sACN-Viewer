@@ -388,6 +388,7 @@ class App:
         self.preview_undocked = False
         self.preview_window = None
         self.preview_host = None
+        self.preview_canvas_container = None
         self._embedded_canvas_placeholder = None
 
         self._build_topbar()
@@ -531,7 +532,7 @@ class App:
         self.fixture_listbox = tk.Listbox(list_panel, bg=PANEL2, fg=TEXT, selectbackground=SIGNAL,
                                            selectforeground="#04181c", relief="flat", height=6,
                                            font=(MONO, 10), highlightthickness=0, activestyle="none",
-                                           selectmode=tk.EXTENDED)
+                                           selectmode=tk.EXTENDED, exportselection=False)
         self.fixture_listbox.pack(fill="x", padx=10, pady=(0, 6))
         self.fixture_listbox.bind("<<ListboxSelect>>", self._on_fixture_select)
 
@@ -570,11 +571,15 @@ class App:
 
     def _create_preview_canvas(self, parent, padx=10, pady=(0, 10)):
         """Canvas + vertical/horizontal scrollbars, reused for both the
-        embedded sidebar location and the undocked window."""
+        embedded sidebar location and the undocked window. The wrapper
+        container is stashed on self so callers can destroy it wholesale
+        later (forgetting just the inner canvas would leave an empty,
+        still-packed container frame behind)."""
         container = tk.Frame(parent, bg=PANEL)
         container.pack(fill="both", expand=True, padx=padx, pady=pady)
         container.rowconfigure(0, weight=1)
         container.columnconfigure(0, weight=1)
+        self.preview_canvas_container = container
 
         canvas = tk.Canvas(container, bg=PANEL, highlightthickness=0)
         vbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
@@ -1336,7 +1341,14 @@ class App:
             self._undock_preview()
 
     def _undock_preview(self):
-        self.preview_canvas.pack_forget()
+        # Destroy the whole embedded container (canvas + scrollbars), not
+        # just the canvas. Forgetting only the canvas left an empty wrapper
+        # frame still packed in the sidebar — the "extra blank preview area"
+        # that piled up on repeated dock/undock cycles.
+        old_container = self.preview_canvas_container
+        if old_container is not None:
+            old_container.destroy()
+
         self._embedded_canvas_placeholder = tk.Frame(self.preview_host, bg=PANEL)
         self._embedded_canvas_placeholder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         tk.Label(self._embedded_canvas_placeholder,
@@ -1362,6 +1374,8 @@ class App:
         if self.preview_window is not None:
             win = self.preview_window
             self.preview_window = None
+            # Destroying the Toplevel also destroys its preview container
+            # (a child of it), so no separate cleanup needed for that side.
             win.destroy()
         if self._embedded_canvas_placeholder is not None:
             self._embedded_canvas_placeholder.destroy()
