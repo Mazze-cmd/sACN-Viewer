@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Signal — Fixture Profile Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e12; --panel:#11171d; --panel-2:#161d24; --line:#232b33; --line-soft:#1a2129;
+    --text:#e4e9ed; --text-muted:#6b7680; --text-dim:#454e57;
+    --signal:#00d9ff; --signal-dim:rgba(0,217,255,0.12);
+    --font-display:'Barlow Condensed',sans-serif; --font-body:'IBM Plex Sans',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+    --radius:4px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{background:var(--bg);color:var(--text);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+
+  .app{max-width:1180px;margin:0 auto;padding:0 22px 60px;}
+
+  .topbar{display:flex;align-items:baseline;gap:12px;padding:22px 0 6px;flex-wrap:wrap;}
+  .topbar h1{font-family:var(--font-display);font-weight:700;font-size:24px;letter-spacing:0.05em;margin:0;text-transform:uppercase;}
+  .topbar .sub{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.05em;}
+  .topbar .name-field{margin-left:auto;display:flex;align-items:center;gap:8px;}
+  .topbar .name-field label{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;}
+  .topbar input[type=text]{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);
+    color:var(--text);font-family:var(--font-body);font-size:13px;padding:7px 10px;width:200px;outline:none;
+  }
+  .topbar input[type=text]:focus{border-color:var(--signal);}
+
+  .step-note{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin:2px 0 22px;letter-spacing:0.02em;}
+
+  .layout{display:grid;grid-template-columns:1.15fr 0.85fr;gap:22px;align-items:start;}
+  @media (max-width:920px){.layout{grid-template-columns:1fr;}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px;}
+  .panel h2{
+    font-family:var(--font-display);font-size:17px;font-weight:600;letter-spacing:0.03em;
+    text-transform:uppercase;margin:0 0 4px;color:var(--text);
+  }
+  .panel .hint{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin:0 0 16px;}
+
+  /* channel count control */
+  .count-row{display:flex;align-items:flex-end;gap:10px;margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--line-soft);}
+  .count-row .field{display:flex;flex-direction:column;gap:5px;}
+  .count-row label{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;}
+  .count-row input[type=number]{
+    width:80px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);
+    color:var(--text);font-family:var(--font-mono);font-size:14px;padding:7px 9px;outline:none;
+  }
+  .count-row input[type=number]:focus{border-color:var(--signal);}
+  .apply-btn{
+    font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.04em;text-transform:uppercase;
+    background:transparent;color:var(--signal);border:1px solid rgba(0,217,255,0.45);
+    border-radius:var(--radius);padding:8px 14px;cursor:pointer;height:33px;
+  }
+  .apply-btn:hover{background:rgba(0,217,255,0.1);}
+  .count-status{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:4px;align-self:center;}
+  .count-status b{color:var(--text-muted);}
+  .count-status.full b{color:var(--signal);}
+
+  /* channel rows */
+  .ch-list{display:flex;flex-direction:column;gap:6px;max-height:560px;overflow-y:auto;padding-right:4px;}
+  .ch-row{
+    display:flex;align-items:center;gap:12px;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 12px;
+  }
+  .ch-row.assigned{border-color:rgba(0,217,255,0.25);}
+  .ch-num{
+    font-family:var(--font-mono);font-size:12px;color:var(--text-muted);min-width:64px;
+  }
+  .ch-num b{color:var(--text);font-weight:500;}
+  .ch-row select{
+    flex:1;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    color:var(--text);font-family:var(--font-mono);font-size:12.5px;padding:7px 8px;outline:none;
+  }
+  .ch-row select:focus{border-color:var(--signal);}
+  .bit16{display:flex;align-items:center;gap:6px;white-space:nowrap;}
+  .bit16 label{font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);letter-spacing:0.02em;cursor:pointer;}
+  .bit16 input[type=checkbox]{accent-color:var(--signal);width:14px;height:14px;cursor:pointer;}
+  .bit16.disabled label, .bit16.disabled{opacity:0.35;cursor:not-allowed;}
+  .bit16.disabled input{cursor:not-allowed;}
+  .badge16{
+    font-family:var(--font-mono);font-size:9.5px;color:var(--signal);border:1px solid rgba(0,217,255,0.4);
+    border-radius:10px;padding:2px 7px;letter-spacing:0.04em;
+  }
+
+  /* summary */
+  .summary-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0;}
+  .summary-list li{
+    display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft);
+    font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted);
+  }
+  .summary-list li:last-child{border-bottom:none;}
+  .summary-list li span.type{color:var(--text);}
+  .summary-list li.unassigned span.type{color:var(--text-dim);font-style:italic;}
+
+  /* preview */
+  .preview-stage{
+    display:flex;flex-direction:column;align-items:center;gap:14px;
+    padding:22px 10px 26px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;margin-bottom:20px;
+  }
+  .beam{
+    width:120px;height:120px;border-radius:50%;
+    background:#1a1a1a;
+    box-shadow:inset 0 0 0 6px #060809;
+    transition:background .08s linear, box-shadow .08s linear;
+    position:relative;
+  }
+  .beam::after{
+    content:'';position:absolute;inset:-40px;border-radius:50%;
+    background:radial-gradient(circle, var(--glow-color,transparent) 0%, transparent 70%);
+    opacity:var(--glow-opacity,0);transition:opacity .08s linear, background .08s linear;
+    z-index:-1;
+  }
+  .preview-readout{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:center;}
+  .preview-readout b{color:var(--text);}
+  .preview-caption{font-family:var(--font-mono);font-size:10.5px;color:var(--text-dim);text-align:center;max-width:260px;}
+
+  .faders{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;padding-top:4px;}
+  .fader-group{display:flex;flex-direction:column;align-items:center;gap:8px;}
+  .fader-group .flabel{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;text-align:center;}
+  .fader-group .fchan{font-family:var(--font-mono);font-size:9px;color:var(--text-dim);}
+  .fader-pair{display:flex;gap:8px;}
+  .fader-wrap{width:30px;height:140px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .fader-wrap input[type=range]{
+    width:140px;height:20px;transform:rotate(-90deg);
+    accent-color:var(--signal);cursor:pointer;
+  }
+  .fader-val{font-family:var(--font-mono);font-size:12px;color:var(--signal);font-weight:600;text-align:center;min-width:34px;}
+  .fader-sub{font-family:var(--font-mono);font-size:8.5px;color:var(--text-dim);text-align:center;letter-spacing:0.05em;}
+  .empty-faders{font-family:var(--font-mono);font-size:11.5px;color:var(--text-dim);text-align:center;padding:10px 0;}
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-track{background:var(--panel);}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="topbar">
+    <h1>Signal</h1>
+    <span class="sub">FIXTURE PROFILE EDITOR</span>
+    <div class="name-field">
+      <label>Fixture name</label>
+      <input type="text" id="fixtureName" value="RGB Par 64">
+    </div>
+  </div>
+  <div class="step-note">Defining property 1 of your fixture profile — channel layout &amp; type. More properties (pan/tilt, gobo, etc.) come later.</div>
+
+  <div class="layout">
+    <!-- LEFT: channel layout builder -->
+    <div class="panel">
+      <h2>Channel layout</h2>
+      <p class="hint">Set how many DMX channels this fixture uses, then assign a type to each slot.</p>
+
+      <div class="count-row">
+        <div class="field">
+          <label>Total channels</label>
+          <input type="number" id="totalInput" min="1" max="128" value="4">
+        </div>
+        <button class="apply-btn" id="applyTotal">Apply</button>
+        <span class="count-status" id="countStatus"></span>
+      </div>
+
+      <div class="ch-list" id="chList"></div>
+    </div>
+
+    <!-- RIGHT: summary + live preview -->
+    <div>
+      <div class="panel" style="margin-bottom:18px;">
+        <h2>Live preview</h2>
+        <p class="hint">Drag the faders to send test values and watch the virtual fixture react.</p>
+        <div class="preview-stage">
+          <div class="beam" id="beam"></div>
+          <div class="preview-readout" id="previewReadout">R 0 · G 0 · B 0 · Dimmer 0%</div>
+        </div>
+        <div class="faders" id="faders"></div>
+        <p class="preview-caption">Preview assumes Intensity acts as a master dimmer over the colour channels.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Channel map</h2>
+        <ul class="summary-list" id="summaryList"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const TYPE_OPTIONS = [
+    {value:'', label:'— unassigned —'},
+    {value:'intensity', label:'Intensity'},
+    {value:'red', label:'Red'},
+    {value:'green', label:'Green'},
+    {value:'blue', label:'Blue'},
+  ];
+  const TYPE_LABEL = {intensity:'Intensity', red:'Red', green:'Green', blue:'Blue'};
+  const MAX_CHANNELS = 128;
+
+  // channel model: {type: ''|'intensity'|'red'|'green'|'blue', role:'single'|'coarse'|'fine', pairIndex:number|null}
+  let channels = [];
+  let sliderValues = {}; // index -> 0-255 (coarse/single) live value
+  let fineValues = {};   // index (of fine slot) -> 0-255 live value
+
+  function freshChannel(){ return {type:'', role:'single', pairIndex:null}; }
+
+  function initDefault(){
+    channels = [freshChannel(), freshChannel(), freshChannel(), freshChannel()];
+    channels[0].type='intensity'; channels[1].type='red'; channels[2].type='green'; channels[3].type='blue';
+    sliderValues = {0:255, 1:255, 2:80, 3:180};
+  }
+
+  function setTotal(n){
+    n = Math.max(1, Math.min(MAX_CHANNELS, n));
+    if(n > channels.length){
+      while(channels.length < n) channels.push(freshChannel());
+    } else if(n < channels.length){
+      channels = channels.slice(0, n);
+      // repair any coarse channel whose fine partner got cut off
+      channels.forEach((c, i)=>{
+        if(c.role==='coarse' && (c.pairIndex===null || c.pairIndex>=n)){
+          c.role='single'; c.pairIndex=null;
+        }
+      });
+    }
+    document.getElementById('totalInput').value = n;
+    renderAll();
+  }
+
+  function toggle16(i){
+    const c = channels[i];
+    if(c.role==='single'){
+      const j = i+1;
+      if(!c.type || j>=channels.length || channels[j].role!=='single') return;
+      c.role='coarse'; c.pairIndex=j;
+      channels[j] = {type:c.type, role:'fine', pairIndex:i};
+      fineValues[j] = fineValues[j] ?? 0;
+    } else if(c.role==='coarse'){
+      const j = c.pairIndex;
+      channels[j] = freshChannel();
+      c.role='single'; c.pairIndex=null;
+      delete fineValues[j];
+    }
+    renderAll();
+  }
+
+  function setType(i, type){
+    channels[i].type = type;
+    if(channels[i].role==='coarse'){
+      channels[channels[i].pairIndex].type = type;
+    }
+    renderAll();
+  }
+
+  function canEnable16(i){
+    const c = channels[i];
+    if(c.role!=='single' || !c.type) return false;
+    const j=i+1;
+    return j<channels.length && channels[j].role==='single';
+  }
+
+  // ---------- render channel list ----------
+  function renderList(){
+    const list = document.getElementById('chList');
+    list.innerHTML = '';
+    let assignedCount = 0;
+    channels.forEach((c,i)=>{
+      if(c.role==='fine') return; // rendered as part of its coarse row
+      if(c.type) assignedCount++;
+      const row = document.createElement('div');
+      row.className = 'ch-row' + (c.type ? ' assigned':'');
+
+      const numLabel = document.createElement('div');
+      numLabel.className='ch-num';
+      if(c.role==='coarse'){
+        numLabel.innerHTML = `<b>CH ${i+1}\u2013${c.pairIndex+1}</b>`;
+        assignedCount++; // fine slot also counted as used
+      } else {
+        numLabel.innerHTML = `<b>CH ${i+1}</b>`;
+      }
+      row.appendChild(numLabel);
+
+      const select = document.createElement('select');
+      TYPE_OPTIONS.forEach(opt=>{
+        const o = document.createElement('option');
+        o.value = opt.value; o.textContent = opt.label;
+        if(opt.value === c.type) o.selected = true;
+        select.appendChild(o);
+      });
+      select.addEventListener('change', (e)=> setType(i, e.target.value));
+      row.appendChild(select);
+
+      if(c.role==='coarse'){
+        const badge = document.createElement('span');
+        badge.className='badge16'; badge.textContent='16-BIT';
+        row.appendChild(badge);
+      }
+
+      const bitWrap = document.createElement('div');
+      const enabled = c.role==='coarse' || canEnable16(i);
+      bitWrap.className = 'bit16' + (enabled ? '' : ' disabled');
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked = c.role==='coarse'; cb.disabled = !enabled;
+      cb.id = 'bit16-'+i;
+      cb.addEventListener('change', ()=> toggle16(i));
+      const lbl = document.createElement('label');
+      lbl.htmlFor = 'bit16-'+i; lbl.textContent='16-bit';
+      bitWrap.appendChild(cb); bitWrap.appendChild(lbl);
+      row.appendChild(bitWrap);
+
+      list.appendChild(row);
+    });
+
+    const total = channels.length;
+    const status = document.getElementById('countStatus');
+    status.innerHTML = `<b>${assignedCount}</b> / ${total} channels assigned`;
+    status.className = 'count-status' + (assignedCount===total ? ' full':'');
+  }
+
+  // ---------- render summary ----------
+  function renderSummary(){
+    const ul = document.getElementById('summaryList');
+    ul.innerHTML = '';
+    channels.forEach((c,i)=>{
+      if(c.role==='fine') return;
+      const li = document.createElement('li');
+      const label = c.role==='coarse' ? `CH ${i+1}\u2013${c.pairIndex+1}` : `CH ${i+1}`;
+      const typeTxt = c.type ? (TYPE_LABEL[c.type] + (c.role==='coarse' ? ' (16-bit)' : '')) : 'unassigned';
+      li.className = c.type ? '' : 'unassigned';
+      li.innerHTML = `<span>${label}</span><span class="type">${typeTxt}</span>`;
+      ul.appendChild(li);
+    });
+  }
+
+  // ---------- render faders + preview ----------
+  function renderFaders(){
+    const wrap = document.getElementById('faders');
+    wrap.innerHTML = '';
+    const order = ['intensity','red','green','blue'];
+    let any = false;
+    order.forEach(type=>{
+      const idx = channels.findIndex(c=>c.type===type && (c.role==='single'||c.role==='coarse'));
+      if(idx===-1) return;
+      any = true;
+      const c = channels[idx];
+      const group = document.createElement('div');
+      group.className='fader-group';
+
+      const label = document.createElement('div');
+      label.className='flabel'; label.textContent = TYPE_LABEL[type];
+      group.appendChild(label);
+
+      const chanTxt = document.createElement('div');
+      chanTxt.className='fchan';
+      chanTxt.textContent = c.role==='coarse' ? `CH ${idx+1}\u2013${c.pairIndex+1}` : `CH ${idx+1}`;
+      group.appendChild(chanTxt);
+
+      const pair = document.createElement('div');
+      pair.className='fader-pair';
+
+      pair.appendChild(makeFader(sliderValues[idx] ?? 0, (v)=>{ sliderValues[idx]=v; updatePreview(); syncReadouts(); }, c.role==='coarse' ? 'MSB' : null));
+
+      if(c.role==='coarse'){
+        const j = c.pairIndex;
+        pair.appendChild(makeFader(fineValues[j] ?? 0, (v)=>{ fineValues[j]=v; updatePreview(); syncReadouts(); }, 'LSB'));
+      }
+      group.appendChild(pair);
+      wrap.appendChild(group);
+    });
+    if(!any){
+      wrap.innerHTML = '<div class="empty-faders">Assign Intensity, Red, Green or Blue to a channel to test it here.</div>';
+    }
+  }
+
+  function makeFader(value, onChange, sub){
+    const box = document.createElement('div');
+    box.style.display='flex'; box.style.flexDirection='column'; box.style.alignItems='center'; box.style.gap='4px';
+
+    const valTxt = document.createElement('div');
+    valTxt.className='fader-val'; valTxt.textContent = value;
+
+    const fw = document.createElement('div');
+    fw.className='fader-wrap';
+    const input = document.createElement('input');
+    input.type='range'; input.min=0; input.max=255; input.value=value;
+    input.addEventListener('input', (e)=>{
+      const v = parseInt(e.target.value);
+      valTxt.textContent = v;
+      onChange(v);
+    });
+    fw.appendChild(input);
+
+    box.appendChild(valTxt);
+    box.appendChild(fw);
+    if(sub){
+      const subEl = document.createElement('div');
+      subEl.className='fader-sub'; subEl.textContent = sub;
+      box.appendChild(subEl);
+    }
+    return box;
+  }
+
+  function getVal(type){
+    const idx = channels.findIndex(c=>c.type===type && (c.role==='single'||c.role==='coarse'));
+    if(idx===-1) return null;
+    return sliderValues[idx] ?? 0;
+  }
+  function get16(type){
+    const idx = channels.findIndex(c=>c.type===type && (c.role==='single'||c.role==='coarse'));
+    if(idx===-1) return null;
+    const c = channels[idx];
+    const coarse = sliderValues[idx] ?? 0;
+    if(c.role!=='coarse') return coarse;
+    const fine = fineValues[c.pairIndex] ?? 0;
+    return coarse*256 + fine;
+  }
+
+  function updatePreview(){
+    const rVal = getVal('red'); const gVal = getVal('green'); const bVal = getVal('blue');
+    const iVal = getVal('intensity');
+    const r = rVal ?? 0, g = gVal ?? 0, b = bVal ?? 0;
+    const dimmer = iVal===null ? 1 : iVal/255;
+    const fr = Math.round(r*dimmer), fg = Math.round(g*dimmer), fb = Math.round(b*dimmer);
+    const beam = document.getElementById('beam');
+    const color = `rgb(${fr},${fg},${fb})`;
+    beam.style.background = (fr||fg||fb) ? color : '#1a1a1a';
+    beam.style.setProperty('--glow-color', color);
+    beam.style.setProperty('--glow-opacity', (fr||fg||fb) ? Math.max(dimmer*0.7, 0.15) : 0);
+    const readout = document.getElementById('previewReadout');
+    readout.innerHTML = `R <b>${r}</b> · G <b>${g}</b> · B <b>${b}</b> · Dimmer <b>${Math.round(dimmer*100)}%</b>`;
+  }
+
+  function syncReadouts(){ /* placeholder for future per-fader numeric sync if needed */ }
+
+  function renderAll(){
+    renderList();
+    renderSummary();
+    renderFaders();
+    updatePreview();
+  }
+
+  document.getElementById('applyTotal').addEventListener('click', ()=>{
+    const n = parseInt(document.getElementById('totalInput').value) || 1;
+    setTotal(n);
+  });
+  document.getElementById('totalInput').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ setTotal(parseInt(e.target.value)||1); }
+  });
+
+  initDefault();
+  renderAll();
+})();
+</script>
+
+</body>
+</html>

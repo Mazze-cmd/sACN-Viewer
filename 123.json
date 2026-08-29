@@ -1,0 +1,76 @@
+{
+  "fixtures": [
+    {
+      "name": "Fixture 1",
+      "universe": 1,
+      "start_channel": 1,
+      "channels": [
+        {
+          "type": "intensity",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": "red",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": "green",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": "blue",
+          "role": "single",
+          "pair_index": null
+        }
+      ],
+      "pixel_count": 8,
+      "repeat_from": 2,
+      "repeat_till": 4,
+      "pixel_rows": 2,
+      "pixel_cols": 4,
+      "preview_x": 19,
+      "preview_y": 26,
+      "preview_w": 397,
+      "preview_h": 183
+    },
+    {
+      "name": "Fixture 1 copy",
+      "universe": 2,
+      "start_channel": 1,
+      "channels": [
+        {
+          "type": "intensity",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": "red",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": "green",
+          "role": "single",
+          "pair_index": null
+        },
+        {
+          "type": null,
+          "role": "single",
+          "pair_index": null
+        }
+      ],
+      "pixel_count": 8,
+      "repeat_from": 2,
+      "repeat_till": 4,
+      "pixel_rows": 2,
+      "pixel_cols": 4,
+      "preview_x": 480,
+      "preview_y": 26,
+      "preview_w": 397,
+      "preview_h": 186
+    }
+  ]
+}
