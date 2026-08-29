@@ -385,6 +385,10 @@ class App:
         self._drag_mode = None
         self._drag_start_mouse = (0, 0)
         self._drag_start_geom = (0, 0, 0, 0)
+        self.preview_undocked = False
+        self.preview_window = None
+        self.preview_host = None
+        self._embedded_canvas_placeholder = None
 
         self._build_topbar()
         self._build_body()
@@ -526,7 +530,8 @@ class App:
 
         self.fixture_listbox = tk.Listbox(list_panel, bg=PANEL2, fg=TEXT, selectbackground=SIGNAL,
                                            selectforeground="#04181c", relief="flat", height=6,
-                                           font=(MONO, 10), highlightthickness=0, activestyle="none")
+                                           font=(MONO, 10), highlightthickness=0, activestyle="none",
+                                           selectmode=tk.EXTENDED)
         self.fixture_listbox.pack(fill="x", padx=10, pady=(0, 6))
         self.fixture_listbox.bind("<<ListboxSelect>>", self._on_fixture_select)
 
@@ -555,10 +560,51 @@ class App:
         self.snap_btn = tk.Button(preview_header, text="Snap: Off", command=self._toggle_snap,
                                    bg=PANEL2, fg=TEXT_MUTED, relief="flat", font=(MONO, 9), padx=8)
         self.snap_btn.pack(side="right")
+        self.undock_btn = tk.Button(preview_header, text="Undock", command=self._toggle_undock,
+                                     bg=PANEL2, fg=TEXT_MUTED, relief="flat", font=(MONO, 9), padx=8)
+        self.undock_btn.pack(side="right", padx=(0, 6))
 
-        self.preview_canvas = tk.Canvas(preview_panel, bg=PANEL, highlightthickness=0)
-        self.preview_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.preview_host = preview_panel
+        self.preview_canvas = self._create_preview_canvas(self.preview_host)
         self._render_preview_canvas()
+
+    def _create_preview_canvas(self, parent, padx=10, pady=(0, 10)):
+        """Canvas + vertical/horizontal scrollbars, reused for both the
+        embedded sidebar location and the undocked window."""
+        container = tk.Frame(parent, bg=PANEL)
+        container.pack(fill="both", expand=True, padx=padx, pady=pady)
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(container, bg=PANEL, highlightthickness=0)
+        vbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        hbar = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+        hbar.grid(row=1, column=0, sticky="ew")
+
+        def on_wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def on_shift_wheel(event):
+            canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", on_wheel),
+                                           canvas.bind_all("<Shift-MouseWheel>", on_shift_wheel)))
+        canvas.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"),
+                                           canvas.unbind_all("<Shift-MouseWheel>")))
+        return canvas
+
+    def _update_scrollregion(self):
+        c = self.preview_canvas
+        if not self.fixtures:
+            c.configure(scrollregion=(0, 0, 0, 0))
+            return
+        max_x = max((fx.preview_x or 0) + fx.preview_w for fx in self.fixtures) + 40
+        max_y = max((fx.preview_y or 0) + fx.preview_h for fx in self.fixtures) + 60
+        c.configure(scrollregion=(0, 0, max_x, max_y))
 
     # ------------------------------------------------------- fixture list
     def _add_fixture(self):
@@ -574,7 +620,8 @@ class App:
         sel = self.fixture_listbox.curselection()
         if not sel:
             return
-        del self.fixtures[sel[0]]
+        to_remove = [self.fixtures[i] for i in sel]
+        self.fixtures = [fx for fx in self.fixtures if fx not in to_remove]
         self.selected_fixture_index = None
         self._refresh_fixture_list()
         self._render_config_panel_empty()
@@ -587,16 +634,49 @@ class App:
 
     def _on_fixture_select(self, _event=None):
         sel = self.fixture_listbox.curselection()
-        if sel:
+        if len(sel) == 1:
             self._select_fixture(sel[0])
+        elif len(sel) > 1:
+            self.selected_fixture_index = None
+            self._render_config_panel_multi(len(sel))
+            for i in sel:
+                self._raise_fixture(self.fixtures[i])
+        else:
+            self.selected_fixture_index = None
+            self._render_config_panel_empty()
 
     def _select_fixture(self, idx):
         self.selected_fixture_index = idx
         self._render_config_panel()
+        if 0 <= idx < len(self.fixtures):
+            self._raise_fixture(self.fixtures[idx])
+
+    def _select_fixture_from_canvas(self, fx):
+        """Clicking a fixture directly in the preview area selects it in
+        the fixture list too, keeping both views in sync."""
+        try:
+            idx = self.fixtures.index(fx)
+        except ValueError:
+            return
+        self.fixture_listbox.selection_clear(0, tk.END)
+        self.fixture_listbox.selection_set(idx)
+        self.fixture_listbox.activate(idx)
+        self.fixture_listbox.see(idx)
+        self._select_fixture(idx)
+
+    def _raise_fixture(self, fx):
+        """Bring a fixture's canvas items to the top of the stacking order
+        so it can't stay permanently hidden behind another fixture."""
+        if id(fx) in self.fixture_items:
+            self.preview_canvas.tag_raise(f"fx_{id(fx)}")
 
     def _rename_fixture(self):
         sel = self.fixture_listbox.curselection()
         if not sel:
+            return
+        if len(sel) > 1:
+            messagebox.showinfo("Select One Fixture", "Rename works on a single fixture at a "
+                                                        "time — select just one.")
             return
         idx = sel[0]
         fx = self.fixtures[idx]
@@ -613,13 +693,18 @@ class App:
         sel = self.fixture_listbox.curselection()
         if not sel:
             return
-        idx = sel[0]
-        fx = self.fixtures[idx].clone()
-        self.fixtures.insert(idx + 1, fx)
+        originals = [self.fixtures[i] for i in sel]
+        clones = [fx.clone() for fx in originals]
+        self.fixtures.extend(clones)
         self._refresh_fixture_list()
         self.fixture_listbox.selection_clear(0, tk.END)
-        self.fixture_listbox.selection_set(idx + 1)
-        self._select_fixture(idx + 1)
+        for fx in clones:
+            self.fixture_listbox.selection_set(self.fixtures.index(fx))
+        if len(clones) == 1:
+            self._select_fixture(self.fixtures.index(clones[0]))
+        else:
+            self.selected_fixture_index = None
+            self._render_config_panel_multi(len(clones))
 
     # ---------------------------------------------------------- presets
     def _save_preset(self, fx):
@@ -648,7 +733,7 @@ class App:
         dlg.configure(bg=PANEL)
         dlg.transient(self.root)
 
-        dlg_w, dlg_h = 340, 430
+        dlg_w, dlg_h = 580, 440
         btn = self.presets_btn
         btn.update_idletasks()
         bx, by = btn.winfo_rootx(), btn.winfo_rooty()
@@ -658,24 +743,83 @@ class App:
         x = max(0, bx)
         dlg.geometry(f"{dlg_w}x{dlg_h}+{x}+{y}")
 
-        tk.Label(dlg, text="Fixture Name", bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9)).pack(
-            anchor="w", padx=12, pady=(14, 2))
-        name_var = tk.StringVar(value="New Fixture")
-        tk.Entry(dlg, textvariable=name_var, bg=PANEL2, fg=TEXT, insertbackground=TEXT,
-                  relief="flat", font=(MONO, 10)).pack(fill="x", padx=12, ipady=3)
+        main = tk.Frame(dlg, bg=PANEL)
+        main.pack(fill="both", expand=True)
 
-        tk.Label(dlg, text="Preset", bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9)).pack(
-            anchor="w", padx=12, pady=(14, 2))
-        lb = tk.Listbox(dlg, bg=PANEL2, fg=TEXT, selectbackground=SIGNAL,
+        left = tk.Frame(main, bg=PANEL)
+        left.pack(side="left", fill="both", expand=True, padx=(12, 6), pady=14)
+
+        right = tk.Frame(main, bg=PANEL2, highlightbackground=LINE, highlightthickness=1)
+        right.pack(side="left", fill="both", expand=True, padx=(6, 12), pady=14)
+
+        tk.Label(left, text="Fixture Name", bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9)).pack(
+            anchor="w", pady=(0, 2))
+        name_var = tk.StringVar(value="New Fixture")
+        tk.Entry(left, textvariable=name_var, bg=PANEL2, fg=TEXT, insertbackground=TEXT,
+                  relief="flat", font=(MONO, 10)).pack(fill="x", ipady=3)
+
+        tk.Label(left, text="Preset", bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9)).pack(
+            anchor="w", pady=(14, 2))
+        lb = tk.Listbox(left, bg=PANEL2, fg=TEXT, selectbackground=SIGNAL,
                          selectforeground="#04181c", relief="flat", font=(MONO, 10),
                          highlightthickness=0, activestyle="none")
         for pname in self.presets:
             lb.insert(tk.END, pname)
-        lb.selection_set(0)
-        lb.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+        lb.pack(fill="both", expand=True, pady=(0, 10))
 
-        btn_row = tk.Frame(dlg, bg=PANEL)
-        btn_row.pack(fill="x", padx=12, pady=(0, 14))
+        btn_row = tk.Frame(left, bg=PANEL)
+        btn_row.pack(fill="x")
+
+        def render_details(_event=None):
+            for w in right.winfo_children():
+                w.destroy()
+            sel = lb.curselection()
+            if not sel:
+                tk.Label(right, text="Select a preset to see details.", bg=PANEL2, fg=TEXT_MUTED,
+                         font=(MONO, 9), wraplength=220, justify="left").pack(
+                    padx=12, pady=12, anchor="w")
+                return
+            pname = lb.get(sel[0])
+            preset = self.presets[pname]
+
+            tk.Label(right, text=pname, bg=PANEL2, fg=TEXT, font=(MONO, 10, "bold")).pack(
+                anchor="w", padx=12, pady=(12, 8))
+
+            rows = max(1, preset["pixel_rows"])
+            cols = max(1, preset["pixel_cols"])
+            cell = max(8, min(24, 140 // max(rows, cols)))
+            gap = 2
+            cw = cols * cell + (cols - 1) * gap
+            ch = rows * cell + (rows - 1) * gap
+            grid_canvas = tk.Canvas(right, width=cw, height=ch, bg=PANEL2, highlightthickness=0)
+            for rr in range(rows):
+                for cc in range(cols):
+                    x0 = cc * (cell + gap)
+                    y0 = rr * (cell + gap)
+                    grid_canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell,
+                                                  fill=SIGNAL, outline=LINE)
+            grid_canvas.pack(padx=12, pady=(0, 10), anchor="w")
+
+            info_lines = [
+                f"Channels: {preset['channel_count']}",
+                f"Pixels: {preset['pixel_count']}",
+                f"Layout: {rows} Row{'s' if rows != 1 else ''} \u00d7 {cols} Col{'s' if cols != 1 else ''}",
+            ]
+            if preset.get("repeat_from") and preset.get("repeat_till"):
+                info_lines.append(f"Repeats: CH {preset['repeat_from']}\u2013{preset['repeat_till']}")
+            for line in info_lines:
+                tk.Label(right, text=line, bg=PANEL2, fg=TEXT_MUTED, font=(MONO, 9)).pack(
+                    anchor="w", padx=12)
+
+            tk.Label(right, text="Channel Layout", bg=PANEL2, fg=TEXT, font=(MONO, 9, "bold")).pack(
+                anchor="w", padx=12, pady=(10, 2))
+            for line in self._describe_preset_channels(preset):
+                tk.Label(right, text=line, bg=PANEL2, fg=TEXT_MUTED, font=(MONO, 9)).pack(
+                    anchor="w", padx=12)
+
+        lb.bind("<<ListboxSelect>>", render_details)
+        lb.selection_set(0)
+        render_details()
 
         def load_preset():
             sel = lb.curselection()
@@ -705,6 +849,7 @@ class App:
             if messagebox.askyesno("Delete Preset", f"Delete preset '{pname}'?", parent=dlg):
                 del self.presets[pname]
                 lb.delete(sel[0])
+                render_details()
                 if not self.presets:
                     dlg.destroy()
 
@@ -712,6 +857,26 @@ class App:
                   relief="flat", font=(MONO, 9), padx=8).pack(side="left")
         tk.Button(btn_row, text="Delete Preset", command=delete_preset, bg=PANEL2, fg=DANGER,
                   relief="flat", font=(MONO, 9), padx=8).pack(side="left", padx=(6, 0))
+
+    @staticmethod
+    def _describe_preset_channels(preset):
+        lines = []
+        channels = preset["channels"]
+        i = 0
+        while i < len(channels):
+            c = channels[i]
+            if c["role"] == "fine":
+                i += 1
+                continue
+            if c["role"] == "coarse":
+                label = f"CH {i + 1}\u2013{c['pair_index'] + 1}"
+                type_txt = FIXTURE_TYPE_LABEL.get(c["type"], "Unassigned") + " (16-bit)"
+            else:
+                label = f"CH {i + 1}"
+                type_txt = FIXTURE_TYPE_LABEL.get(c["type"], "Unassigned")
+            lines.append(f"{label}: {type_txt}")
+            i += 1
+        return lines
 
     # ------------------------------------------------------ setup file I/O
     def _save_setup(self):
@@ -756,20 +921,38 @@ class App:
             w.destroy()
 
     def _render_config_panel_empty(self):
+        # Never leave the panel truly blank: render the same form against a
+        # neutral placeholder fixture, fully greyed out and non-interactive.
+        placeholder = getattr(self, "_placeholder_fixture", None)
+        if placeholder is None:
+            placeholder = Fixture("No Fixture Selected")
+            self._placeholder_fixture = placeholder
+        self._render_config_panel_for(placeholder, interactive=False)
+
+    def _render_config_panel_multi(self, count):
         self._clear_config_panel()
         tk.Label(self.config_panel, text="FIXTURE CONFIG", bg=PANEL, fg=TEXT,
                  font=(MONO, 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
-        tk.Label(self.config_panel, text="Select or add a fixture to configure it.",
-                 bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9)).pack(anchor="w", padx=10, pady=(0, 10))
+        tk.Label(self.config_panel,
+                 text=f"{count} fixtures selected. Rename, Duplicate and Remove Selected apply "
+                      "to the selection — select just one fixture to edit its channel layout.",
+                 bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9), wraplength=300,
+                 justify="left").pack(anchor="w", padx=10, pady=(0, 10))
 
     def _render_config_panel(self):
         if self.selected_fixture_index is None or self.selected_fixture_index >= len(self.fixtures):
             self._render_config_panel_empty()
             return
-        self._clear_config_panel()
         fx = self.fixtures[self.selected_fixture_index]
+        self._render_config_panel_for(fx, interactive=True)
 
-        tk.Label(self.config_panel, text=f"CONFIG \u2014 {fx.name}", bg=PANEL, fg=TEXT,
+    def _render_config_panel_for(self, fx, interactive):
+        self._clear_config_panel()
+        state_normal = "normal" if interactive else "disabled"
+        state_readonly = "readonly" if interactive else "disabled"
+        title_fg = TEXT if interactive else TEXT_MUTED
+
+        tk.Label(self.config_panel, text=f"CONFIG \u2014 {fx.name}", bg=PANEL, fg=title_fg,
                  font=(MONO, 10, "bold")).pack(anchor="w", padx=10, pady=(10, 6))
 
         row1 = tk.Frame(self.config_panel, bg=PANEL)
@@ -783,11 +966,14 @@ class App:
         count_var = tk.StringVar(value=str(fx.channel_count()))
 
         tk.Spinbox(row1, from_=1, to=63999, textvariable=uni_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=0, sticky="w")
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=0, sticky="w")
         tk.Spinbox(row1, from_=1, to=512, textvariable=start_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=1, sticky="w", padx=(10, 0))
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=1, sticky="w", padx=(10, 0))
         tk.Spinbox(row1, from_=1, to=64, textvariable=count_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=2, sticky="w", padx=(10, 0))
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=2, sticky="w", padx=(10, 0))
 
         def apply_basics():
             try:
@@ -812,13 +998,17 @@ class App:
                                           "with From \u2264 Till. Repeat range was cleared.")
                     fx.repeat_from = None
                     fx.repeat_till = None
-            self._render_config_panel()
-            self._render_preview_canvas()
+            # Deferred: rebuilding this panel destroys the very Button whose
+            # command is currently running. Doing that synchronously can
+            # abort mid-rebuild on some Tk builds, leaving the panel empty.
+            self.root.after_idle(self._render_config_panel)
+            self.root.after_idle(self._render_preview_canvas)
 
         tk.Button(row1, text="Apply", command=apply_basics, bg=PANEL2, fg=SIGNAL, relief="flat",
-                  font=(MONO, 9), padx=8).grid(row=1, column=3, padx=(10, 0))
+                  font=(MONO, 9), padx=8, state=state_normal).grid(row=1, column=3, padx=(10, 0))
         tk.Button(row1, text="Save As Preset", command=lambda: self._save_preset(fx), bg=PANEL2,
-                  fg=SIGNAL, relief="flat", font=(MONO, 9), padx=8).grid(row=1, column=4, padx=(10, 0))
+                  fg=SIGNAL, relief="flat", font=(MONO, 9), padx=8,
+                  state=state_normal).grid(row=1, column=4, padx=(10, 0))
 
         row2 = tk.Frame(self.config_panel, bg=PANEL)
         row2.pack(fill="x", padx=10, pady=(0, 8))
@@ -833,15 +1023,20 @@ class App:
         cols_var = tk.StringVar(value=str(fx.pixel_cols))
 
         tk.Spinbox(row2, from_=1, to=64, textvariable=pixel_count_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=0, sticky="w")
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=0, sticky="w")
         tk.Entry(row2, textvariable=repeat_from_var, width=8, bg=PANEL2, fg=TEXT,
-                  insertbackground=TEXT, relief="flat").grid(row=1, column=1, sticky="w", padx=(10, 0))
+                  insertbackground=TEXT, relief="flat", state=state_normal).grid(
+            row=1, column=1, sticky="w", padx=(10, 0))
         tk.Entry(row2, textvariable=repeat_till_var, width=8, bg=PANEL2, fg=TEXT,
-                  insertbackground=TEXT, relief="flat").grid(row=1, column=2, sticky="w", padx=(10, 0))
+                  insertbackground=TEXT, relief="flat", state=state_normal).grid(
+            row=1, column=2, sticky="w", padx=(10, 0))
         tk.Spinbox(row2, from_=1, to=16, textvariable=rows_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=3, sticky="w", padx=(10, 0))
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=3, sticky="w", padx=(10, 0))
         tk.Spinbox(row2, from_=1, to=16, textvariable=cols_var, width=6, bg=PANEL2, fg=TEXT,
-                   buttonbackground=PANEL2, relief="flat").grid(row=1, column=4, sticky="w", padx=(10, 0))
+                   buttonbackground=PANEL2, relief="flat", state=state_normal).grid(
+            row=1, column=4, sticky="w", padx=(10, 0))
         tk.Label(self.config_panel, text="Leave Repeat From/Till empty for a single-pixel fixture.",
                  bg=PANEL, fg=TEXT_MUTED, font=(MONO, 8)).pack(anchor="w", padx=10, pady=(0, 6))
 
@@ -862,33 +1057,45 @@ class App:
                 ch_label = f"CH {fx.start_channel + i}\u2013{fx.start_channel + c['pair_index']}"
             else:
                 ch_label = f"CH {fx.start_channel + i}"
-            tk.Label(row, text=ch_label, bg=PANEL2, fg=TEXT, font=(MONO, 9), width=11,
-                     anchor="w").pack(side="left", padx=(8, 4), pady=6)
+            tk.Label(row, text=ch_label, bg=PANEL2, fg=(TEXT if interactive else TEXT_MUTED),
+                     font=(MONO, 9), width=11, anchor="w").pack(side="left", padx=(8, 4), pady=6)
 
             type_var = tk.StringVar(value=FIXTURE_TYPE_LABEL.get(c["type"], ""))
-            combo = ttk.Combobox(row, textvariable=type_var, state="readonly", width=9,
+            combo = ttk.Combobox(row, textvariable=type_var, state=state_readonly, width=9,
                                   values=FIXTURE_TYPE_OPTIONS)
             combo.pack(side="left", padx=4)
 
             def make_type_handler(idx=i, var=type_var):
                 def handler(_event=None):
                     fx.set_type(idx, FIXTURE_TYPE_KEY[var.get()])
-                    self._render_config_panel()
-                    self._render_preview_canvas()
+                    # Deferred for the same reason as apply_basics above:
+                    # this callback is running ON the combobox that's about
+                    # to be destroyed and recreated by the rebuild.
+                    self.root.after_idle(self._render_config_panel)
+                    self.root.after_idle(self._render_preview_canvas)
                 return handler
             combo.bind("<<ComboboxSelected>>", make_type_handler())
 
-            can16 = c["role"] == "coarse" or fx.can_enable_16(i)
-            bit_var = tk.BooleanVar(value=(c["role"] == "coarse"))
-            cb = tk.Checkbutton(row, text="16-bit", variable=bit_var, bg=PANEL2, fg=TEXT_MUTED,
-                                 selectcolor=PANEL2, activebackground=PANEL2, font=(MONO, 8),
+            can16 = interactive and (c["role"] == "coarse" or fx.can_enable_16(i))
+            is_on = c["role"] == "coarse"
+            bit_var = tk.BooleanVar(value=is_on)
+            # indicatoron=False avoids a known Windows/Tk quirk where a
+            # custom selectcolor on a native-style checkbutton indicator
+            # can render the checked/unchecked glyph backwards; drawing it
+            # as a plain toggle pill instead makes the state unambiguous.
+            cb = tk.Checkbutton(row, text="16-bit", variable=bit_var, indicatoron=False,
+                                 bg=(SIGNAL if is_on else PANEL2),
+                                 fg=("#04181c" if is_on else TEXT_MUTED),
+                                 activebackground=(SIGNAL if is_on else LINE),
+                                 selectcolor=SIGNAL, disabledforeground=TEXT_MUTED,
+                                 relief="flat", bd=1, padx=6, pady=1, font=(MONO, 8),
                                  state=("normal" if can16 else "disabled"))
 
             def make_bit_handler(idx=i):
                 def handler():
                     fx.toggle_16(idx)
-                    self._render_config_panel()
-                    self._render_preview_canvas()
+                    self.root.after_idle(self._render_config_panel)
+                    self.root.after_idle(self._render_preview_canvas)
                 return handler
             cb.config(command=make_bit_handler())
             cb.pack(side="left", padx=4)
@@ -921,6 +1128,7 @@ class App:
         if not self.fixtures:
             c.create_text(16, 16, text="No Fixtures yet — add one above.", fill=TEXT_MUTED,
                            font=(MONO, 9), anchor="nw")
+        self._update_scrollregion()
 
     def _create_fixture_items(self, fx):
         """Create all canvas items for a fixture once. Dragging/resizing
@@ -1053,6 +1261,7 @@ class App:
     # release) rather than per-item tag_bind for motion, so the gesture
     # survives even though items are repositioned every frame.
     def _on_move_press(self, event, fx):
+        self._select_fixture_from_canvas(fx)
         self._drag_fx = fx
         self._drag_mode = "move"
         self._drag_start_mouse = (event.x, event.y)
@@ -1061,6 +1270,7 @@ class App:
         self.preview_canvas.bind("<ButtonRelease-1>", self._on_drag_end)
 
     def _on_resize_press(self, event, fx, direction):
+        self._select_fixture_from_canvas(fx)
         self._drag_fx = fx
         self._drag_mode = direction
         self._drag_start_mouse = (event.x, event.y)
@@ -1106,6 +1316,7 @@ class App:
 
         fx.preview_x, fx.preview_y, fx.preview_w, fx.preview_h = new_x, new_y, new_w, new_h
         self._layout_fixture_items(fx)
+        self._update_scrollregion()
 
     def _on_drag_end(self, _event):
         self.preview_canvas.unbind("<B1-Motion>")
@@ -1117,6 +1328,50 @@ class App:
         self.snap_enabled = not self.snap_enabled
         self.snap_btn.config(text=f"Snap: {'On' if self.snap_enabled else 'Off'}",
                               fg=(SIGNAL if self.snap_enabled else TEXT_MUTED))
+
+    def _toggle_undock(self):
+        if self.preview_undocked:
+            self._redock_preview()
+        else:
+            self._undock_preview()
+
+    def _undock_preview(self):
+        self.preview_canvas.pack_forget()
+        self._embedded_canvas_placeholder = tk.Frame(self.preview_host, bg=PANEL)
+        self._embedded_canvas_placeholder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        tk.Label(self._embedded_canvas_placeholder,
+                 text="Preview undocked — see the separate window.",
+                 bg=PANEL, fg=TEXT_MUTED, font=(MONO, 9), wraplength=280,
+                 justify="left").pack(expand=True)
+
+        win = tk.Toplevel(self.root)
+        win.title("Signal \u2014 Fixture Preview")
+        win.configure(bg=PANEL)
+        win.geometry("900x600")
+        win.minsize(400, 300)
+        win.protocol("WM_DELETE_WINDOW", self._redock_preview)
+        self.preview_window = win
+
+        self.preview_canvas = self._create_preview_canvas(win, padx=12, pady=12)
+
+        self.preview_undocked = True
+        self.undock_btn.config(text="Redock", fg=SIGNAL)
+        self._render_preview_canvas()
+
+    def _redock_preview(self):
+        if self.preview_window is not None:
+            win = self.preview_window
+            self.preview_window = None
+            win.destroy()
+        if self._embedded_canvas_placeholder is not None:
+            self._embedded_canvas_placeholder.destroy()
+            self._embedded_canvas_placeholder = None
+
+        self.preview_canvas = self._create_preview_canvas(self.preview_host)
+
+        self.preview_undocked = False
+        self.undock_btn.config(text="Undock", fg=TEXT_MUTED)
+        self._render_preview_canvas()
 
     def _update_fixture_previews(self):
         for fx in self.fixtures:
@@ -1307,6 +1562,8 @@ class App:
     def _on_close(self):
         if self.listening:
             self._stop_receiver()
+        if self.preview_window is not None:
+            self.preview_window.destroy()
         self.root.destroy()
 
 
